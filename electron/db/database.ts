@@ -91,7 +91,72 @@ CREATE INDEX IF NOT EXISTS idx_market_history_skin   ON market_history(skin_id);
 CREATE INDEX IF NOT EXISTS idx_withdrawals_date       ON withdrawals(date);
 `
 
-const SCHEMA_VERSION = 3
+const SCHEMA_VERSION = 4
+
+/**
+ * Every column each table must have. `CREATE TABLE IF NOT EXISTS` is a no-op on a
+ * database an older build already created, so a column added to SCHEMA later never
+ * reaches those files unless it is also listed here and backfilled on launch.
+ *
+ * DDL here must be ALTER-safe, which is stricter than CREATE: no PRIMARY KEY, no
+ * UNIQUE, and NOT NULL requires a DEFAULT. Hence the defaults on columns that SCHEMA
+ * declares as plain NOT NULL — legacy rows need some value to adopt.
+ */
+const EXPECTED_COLUMNS: Record<string, Record<string, string>> = {
+  skins: {
+    skin_name: `TEXT NOT NULL DEFAULT ''`,
+    weapon: `TEXT NOT NULL DEFAULT ''`,
+    finish: `TEXT NOT NULL DEFAULT ''`,
+    wear: `TEXT`,
+    float_value: `REAL`,
+    pattern: `INTEGER`,
+    stattrak: `INTEGER NOT NULL DEFAULT 0`,
+    souvenir: `INTEGER NOT NULL DEFAULT 0`,
+    purchase_source: `TEXT NOT NULL DEFAULT 'Manual'`,
+    purchase_price_usd: `REAL`,
+    purchase_price_inr: `REAL`,
+    purchase_price_empire: `REAL`,
+    purchase_exchange_rate: `REAL`,
+    purchase_date: `TEXT NOT NULL DEFAULT ''`,
+    sale_source: `TEXT`,
+    sale_price_usd: `REAL`,
+    sale_price_inr: `REAL`,
+    sale_price_empire: `REAL`,
+    sale_exchange_rate: `REAL`,
+    sale_fee_percentage: `REAL`,
+    sale_date: `TEXT`,
+    status: `TEXT NOT NULL DEFAULT 'owned'`,
+    notes: `TEXT`,
+    favorite: `INTEGER NOT NULL DEFAULT 0`,
+    pinned: `INTEGER NOT NULL DEFAULT 0`,
+    wishlist: `INTEGER NOT NULL DEFAULT 0`,
+    tags: `TEXT NOT NULL DEFAULT '[]'`,
+    category: `TEXT`,
+    created_at: `TEXT NOT NULL DEFAULT ''`,
+    updated_at: `TEXT NOT NULL DEFAULT ''`,
+  },
+  settings: {
+    exchange_rate: `REAL NOT NULL DEFAULT ${DEFAULT_SETTINGS.exchange_rate}`,
+    empire_coin_inr: `REAL NOT NULL DEFAULT 63`,
+    default_fee_percentage: `REAL NOT NULL DEFAULT ${DEFAULT_SETTINGS.default_fee_percentage}`,
+    theme: `TEXT NOT NULL DEFAULT '${DEFAULT_SETTINGS.theme}'`,
+    currency_symbol: `TEXT NOT NULL DEFAULT '${DEFAULT_SETTINGS.currency_symbol}'`,
+    backup_location: `TEXT`,
+    auto_backup: `INTEGER NOT NULL DEFAULT 1`,
+  },
+  market_history: {
+    skin_id: `INTEGER NOT NULL DEFAULT 0`,
+    market: `TEXT NOT NULL DEFAULT ''`,
+    price: `REAL NOT NULL DEFAULT 0`,
+    date: `TEXT NOT NULL DEFAULT ''`,
+  },
+  withdrawals: {
+    amount: `REAL NOT NULL DEFAULT 0`,
+    date: `TEXT NOT NULL DEFAULT ''`,
+    note: `TEXT`,
+    created_at: `TEXT NOT NULL DEFAULT ''`,
+  },
+}
 
 /**
  * Open (creating if needed) the SQLite database at the given path, apply the
@@ -149,25 +214,41 @@ function ensureSettingsRow(instance: DB): void {
 }
 
 /**
- * Minimal forward-only migration runner. New schema changes append a numbered
- * block here; the schema_version key records how far we've come.
+ * Bring an existing table up to the current shape by adding whatever columns it is
+ * missing. Idempotent, so it can run unconditionally on every launch: a database
+ * created by the current SCHEMA has nothing to add, and one created by an older
+ * build gets the columns that build never knew about.
  */
-/** Add a column to an existing table if it isn't already present (idempotent). */
-function ensureColumn(instance: DB, table: string, column: string, ddl: string): void {
-  const cols = instance.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]
-  if (!cols.some((c) => c.name === column)) {
-    instance.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${ddl}`)
+function syncColumns(instance: DB, table: string, expected: Record<string, string>): string[] {
+  const present = new Set(
+    (instance.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]).map((c) => c.name),
+  )
+  const added: string[] = []
+  for (const [column, ddl] of Object.entries(expected)) {
+    if (!present.has(column)) {
+      instance.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${ddl}`)
+      added.push(`${table}.${column}`)
+    }
   }
+  return added
 }
 
+/**
+ * Forward-only migration runner. Reconciles every table against EXPECTED_COLUMNS,
+ * then records how far we've come.
+ */
 function runMigrations(instance: DB): void {
   const row = instance.prepare(`SELECT value FROM schema_meta WHERE key = 'schema_version'`).get() as
     | { value: string }
     | undefined
   const current = row ? Number(row.value) : 0
 
-  // v3: direct CSGOEmpire coin → INR rate (older databases pre-date this column).
-  ensureColumn(instance, 'settings', 'empire_coin_inr', 'REAL NOT NULL DEFAULT 63')
+  const added = Object.entries(EXPECTED_COLUMNS).flatMap(([table, columns]) =>
+    syncColumns(instance, table, columns),
+  )
+  if (added.length > 0) {
+    console.log(`[db] migrated ${current} → ${SCHEMA_VERSION}, added: ${added.join(', ')}`)
+  }
 
   if (current !== SCHEMA_VERSION) {
     instance

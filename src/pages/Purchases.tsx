@@ -65,7 +65,7 @@ export default function Purchases() {
     formState: { errors, dirtyFields },
   } = useForm<PurchaseFormValues>({
     resolver: zodResolver(purchaseFormSchema),
-    defaultValues: defaultPurchaseValues('csfloat', settings.exchange_rate),
+    defaultValues: defaultPurchaseValues('csfloat', settings.exchange_rate, settings.default_currency),
   })
 
   const values = watch()
@@ -114,7 +114,7 @@ export default function Purchases() {
   const changeMode = (next: PurchaseMode) => {
     setMode(next)
     setPaste('')
-    reset(defaultPurchaseValues(next, Number(values.exchange_rate) || settings.exchange_rate))
+    reset(defaultPurchaseValues(next, Number(values.exchange_rate) || settings.exchange_rate, settings.default_currency))
   }
 
   const switchToDetected = (src: ListingSource) => {
@@ -132,14 +132,14 @@ export default function Purchases() {
           { title: 'Purchase saved', desktop: true },
         )
         setPaste('')
-        reset(defaultPurchaseValues(mode, Number(v.exchange_rate) || settings.exchange_rate))
+        reset(defaultPurchaseValues(mode, Number(v.exchange_rate) || settings.exchange_rate, settings.default_currency))
       } catch {
         toast.error('Could not save the purchase. Please try again.')
       } finally {
         setSaving(false)
       }
     },
-    [mode, reset, settings.exchange_rate, settings.empire_coin_inr, toast],
+    [mode, reset, settings.exchange_rate, settings.empire_coin_inr, settings.default_currency, toast],
   )
 
   // Ctrl+S saves.
@@ -221,14 +221,18 @@ export default function Purchases() {
                 </Select>
               </Field>
 
-              <Field label="Float value" error={errors.float_value?.message} hint="0 – 1">
+              <Field
+                label="Float value"
+                error={errors.float_value?.message}
+                hint="0 – 1, up to 12 decimals"
+              >
                 <Input
                   type="number"
-                  step="0.0001"
+                  step="0.000000000001"
                   min="0"
                   max="1"
                   inputMode="decimal"
-                  placeholder="0.1543"
+                  placeholder="0.154321987654"
                   error={!!errors.float_value}
                   {...register('float_value')}
                 />
@@ -352,7 +356,7 @@ export default function Purchases() {
                 size="lg"
                 onClick={() => {
                   setPaste('')
-                  reset(defaultPurchaseValues(mode, settings.exchange_rate))
+                  reset(defaultPurchaseValues(mode, settings.exchange_rate, settings.default_currency))
                 }}
                 title="Reset form"
               >

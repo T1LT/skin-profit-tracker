@@ -46,17 +46,19 @@ export function MonthlyFlowChart({ data }: { data: MonthlyPoint[] }) {
         items={[
           { label: 'Purchases', color: CHART.categorical[0] },
           { label: 'Sales', color: CHART.categorical[1] },
+          { label: 'Withdrawals', color: CHART.danger },
         ]}
       />
       <div className="mt-3 h-[248px] w-full">
         <ResponsiveContainer width="100%" height="100%">
-          <BarChart data={data} margin={{ top: 6, right: 6, left: -6, bottom: 0 }} barGap={2} barCategoryGap="26%">
+          <BarChart data={data} margin={{ top: 6, right: 6, left: -6, bottom: 0 }} barGap={2} barCategoryGap="20%">
             <CartesianGrid vertical={false} stroke={CHART.grid} />
             <XAxis dataKey="label" tickLine={false} axisLine={false} tick={AXIS_TICK} dy={6} minTickGap={12} />
             <YAxis tickLine={false} axisLine={false} tick={AXIS_TICK} width={52} tickFormatter={moneyCompact} />
             <Tooltip cursor={{ fill: CHART.cursor }} content={tip(money, (l) => `Month · ${l}`)} />
-            <Bar dataKey="purchases" name="Purchases" fill={CHART.categorical[0]} radius={[4, 4, 0, 0]} maxBarSize={22} />
-            <Bar dataKey="sales" name="Sales" fill={CHART.categorical[1]} radius={[4, 4, 0, 0]} maxBarSize={22} />
+            <Bar dataKey="purchases" name="Purchases" fill={CHART.categorical[0]} radius={[4, 4, 0, 0]} maxBarSize={18} />
+            <Bar dataKey="sales" name="Sales" fill={CHART.categorical[1]} radius={[4, 4, 0, 0]} maxBarSize={18} />
+            <Bar dataKey="withdrawals" name="Withdrawals" fill={CHART.danger} radius={[4, 4, 0, 0]} maxBarSize={18} />
           </BarChart>
         </ResponsiveContainer>
       </div>

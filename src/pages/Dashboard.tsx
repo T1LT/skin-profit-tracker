@@ -195,7 +195,7 @@ function DashboardContent({
           value={moneyCompact(stats.totalInventoryValue)}
           icon={Wallet}
           accent="brand"
-          sublabel={`${stats.ownedCount} skins held`}
+          sublabel={`${stats.ownedCount} held · ${stats.listedCount} listed`}
         />
         <StatCard
           index={1}
@@ -212,14 +212,18 @@ function DashboardContent({
           value={formatSignedMoney(stats.unrealizedProfit, symbol)}
           icon={LineChart}
           accent={unrealizedAccent}
-          sublabel="on skins still held"
+          sublabel={
+            stats.listedCount > 0
+              ? `if all ${stats.listedCount} listed skins sell`
+              : 'nothing listed yet'
+          }
         />
         <StatCard
           index={3}
-          label="Overall ROI"
-          value={formatPercent(stats.overallRoi, { signed: true })}
-          icon={Percent}
-          accent={stats.overallRoi >= 0 ? 'gold' : 'danger'}
+          label="Avg Holding Time"
+          value={formatHoldingTime(stats.avgHoldingDays)}
+          icon={Clock}
+          accent="gold"
           sublabel="on closed trades"
         />
       </section>
@@ -232,14 +236,6 @@ function DashboardContent({
         <StatCard index={7} label="Sold Skins" value={stats.soldCount} icon={CheckCircle2} accent="muted" sublabel="realized" />
       </section>
 
-      {/* Tertiary KPIs */}
-      <section className="grid grid-cols-2 gap-3.5 lg:grid-cols-4">
-        <StatCard index={8} label="Avg Holding Time" value={formatHoldingTime(stats.avgHoldingDays)} icon={Clock} accent="brand" />
-        <StatCard index={9} label="Avg Purchase Price" value={money(stats.avgPurchasePrice)} icon={Receipt} accent="info" />
-        <StatCard index={10} label="Avg Sale Price" value={money(stats.avgSalePrice)} icon={Receipt} accent="accent" />
-        <StatCard index={11} label="Total Fees Paid" value={money(stats.totalFeesPaid)} icon={Coins} accent="warning" />
-      </section>
-
       {/* Best / worst trade */}
       <section className="grid grid-cols-1 gap-3.5 lg:grid-cols-2">
         <TradeHighlight variant="best" trade={stats.highestProfit} symbol={symbol} />
@@ -248,7 +244,11 @@ function DashboardContent({
 
       {/* Time-series charts */}
       <section className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-        <Panel title="Monthly Cashflow" subtitle="Purchases vs. sales" icon={<ShoppingCart className="h-4 w-4" />}>
+        <Panel
+          title="Monthly Cashflow"
+          subtitle="Purchases, sales and withdrawals"
+          icon={<ShoppingCart className="h-4 w-4" />}
+        >
           <MonthlyFlowChart data={stats.monthly} />
         </Panel>
         <Panel title="Monthly Profit" subtitle="Realized profit per month" icon={<Trophy className="h-4 w-4" />}>

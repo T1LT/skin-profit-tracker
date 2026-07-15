@@ -7,8 +7,16 @@ export type DB = InstanceType<typeof Database>
 
 let db: DB | null = null
 
-/** The DDL that defines the entire schema. Run on every launch (idempotent). */
-const SCHEMA = /* sql */ `
+/**
+ * The table DDL. Run on every launch (idempotent).
+ *
+ * Kept separate from SCHEMA_INDEXES because `CREATE TABLE IF NOT EXISTS` is a no-op
+ * against a database an older build created — so on those files a column added here
+ * only ever arrives via syncColumns(). An index over such a column must therefore be
+ * created *after* migrations, or it would reference a column that does not exist yet
+ * and take the whole app down at launch. See initDatabase().
+ */
+const SCHEMA_TABLES = /* sql */ `
 CREATE TABLE IF NOT EXISTS schema_meta (
   key   TEXT PRIMARY KEY,
   value TEXT
@@ -26,17 +34,31 @@ CREATE TABLE IF NOT EXISTS skins (
   souvenir               INTEGER NOT NULL DEFAULT 0,
 
   purchase_source        TEXT    NOT NULL DEFAULT 'Manual',
+  purchase_currency      TEXT,
   purchase_price_usd     REAL,
   purchase_price_inr     REAL,
   purchase_price_empire  REAL,
   purchase_exchange_rate REAL,
+  purchase_empire_rate   REAL,
   purchase_date          TEXT    NOT NULL,
 
+  list_source            TEXT,
+  list_currency          TEXT,
+  list_price_usd         REAL,
+  list_price_inr         REAL,
+  list_price_empire      REAL,
+  list_exchange_rate     REAL,
+  list_empire_rate       REAL,
+  list_fee_percentage    REAL,
+  list_date              TEXT,
+
   sale_source            TEXT,
+  sale_currency          TEXT,
   sale_price_usd         REAL,
   sale_price_inr         REAL,
   sale_price_empire      REAL,
   sale_exchange_rate     REAL,
+  sale_empire_rate       REAL,
   sale_fee_percentage    REAL,
   sale_date              TEXT,
 
@@ -57,6 +79,7 @@ CREATE TABLE IF NOT EXISTS settings (
   id                     INTEGER PRIMARY KEY CHECK (id = 1),
   exchange_rate          REAL    NOT NULL,
   empire_coin_inr        REAL    NOT NULL DEFAULT 63,
+  default_currency       TEXT    NOT NULL DEFAULT 'EMPIRE',
   default_fee_percentage REAL    NOT NULL,
   theme                  TEXT    NOT NULL,
   currency_symbol        TEXT    NOT NULL,
@@ -81,17 +104,22 @@ CREATE TABLE IF NOT EXISTS withdrawals (
   created_at TEXT    NOT NULL
 );
 
+`
+
+/** Index DDL. Runs *after* migrations, so it may reference newly added columns. */
+const SCHEMA_INDEXES = /* sql */ `
 CREATE INDEX IF NOT EXISTS idx_skins_status          ON skins(status);
 CREATE INDEX IF NOT EXISTS idx_skins_purchase_date   ON skins(purchase_date);
+CREATE INDEX IF NOT EXISTS idx_skins_list_date       ON skins(list_date);
 CREATE INDEX IF NOT EXISTS idx_skins_sale_date       ON skins(sale_date);
 CREATE INDEX IF NOT EXISTS idx_skins_purchase_source ON skins(purchase_source);
 CREATE INDEX IF NOT EXISTS idx_skins_sale_source     ON skins(sale_source);
 CREATE INDEX IF NOT EXISTS idx_skins_weapon          ON skins(weapon);
 CREATE INDEX IF NOT EXISTS idx_market_history_skin   ON market_history(skin_id);
-CREATE INDEX IF NOT EXISTS idx_withdrawals_date       ON withdrawals(date);
+CREATE INDEX IF NOT EXISTS idx_withdrawals_date      ON withdrawals(date);
 `
 
-const SCHEMA_VERSION = 4
+const SCHEMA_VERSION = 5
 
 /**
  * Every column each table must have. `CREATE TABLE IF NOT EXISTS` is a no-op on a
@@ -113,16 +141,29 @@ const EXPECTED_COLUMNS: Record<string, Record<string, string>> = {
     stattrak: `INTEGER NOT NULL DEFAULT 0`,
     souvenir: `INTEGER NOT NULL DEFAULT 0`,
     purchase_source: `TEXT NOT NULL DEFAULT 'Manual'`,
+    purchase_currency: `TEXT`,
     purchase_price_usd: `REAL`,
     purchase_price_inr: `REAL`,
     purchase_price_empire: `REAL`,
     purchase_exchange_rate: `REAL`,
+    purchase_empire_rate: `REAL`,
     purchase_date: `TEXT NOT NULL DEFAULT ''`,
+    list_source: `TEXT`,
+    list_currency: `TEXT`,
+    list_price_usd: `REAL`,
+    list_price_inr: `REAL`,
+    list_price_empire: `REAL`,
+    list_exchange_rate: `REAL`,
+    list_empire_rate: `REAL`,
+    list_fee_percentage: `REAL`,
+    list_date: `TEXT`,
     sale_source: `TEXT`,
+    sale_currency: `TEXT`,
     sale_price_usd: `REAL`,
     sale_price_inr: `REAL`,
     sale_price_empire: `REAL`,
     sale_exchange_rate: `REAL`,
+    sale_empire_rate: `REAL`,
     sale_fee_percentage: `REAL`,
     sale_date: `TEXT`,
     status: `TEXT NOT NULL DEFAULT 'owned'`,
@@ -138,6 +179,7 @@ const EXPECTED_COLUMNS: Record<string, Record<string, string>> = {
   settings: {
     exchange_rate: `REAL NOT NULL DEFAULT ${DEFAULT_SETTINGS.exchange_rate}`,
     empire_coin_inr: `REAL NOT NULL DEFAULT 63`,
+    default_currency: `TEXT NOT NULL DEFAULT '${DEFAULT_SETTINGS.default_currency}'`,
     default_fee_percentage: `REAL NOT NULL DEFAULT ${DEFAULT_SETTINGS.default_fee_percentage}`,
     theme: `TEXT NOT NULL DEFAULT '${DEFAULT_SETTINGS.theme}'`,
     currency_symbol: `TEXT NOT NULL DEFAULT '${DEFAULT_SETTINGS.currency_symbol}'`,
@@ -172,8 +214,9 @@ export function initDatabase(dbPath: string): DB {
   instance.pragma('synchronous = NORMAL')
   instance.pragma('foreign_keys = ON')
 
-  instance.exec(SCHEMA)
-  runMigrations(instance)
+  instance.exec(SCHEMA_TABLES)
+  runMigrations(instance) // ALTERs land here, before anything can reference a new column
+  instance.exec(SCHEMA_INDEXES)
   ensureSettingsRow(instance)
 
   db = instance
@@ -198,12 +241,13 @@ function ensureSettingsRow(instance: DB): void {
     instance
       .prepare(
         `INSERT INTO settings
-           (id, exchange_rate, empire_coin_inr, default_fee_percentage, theme, currency_symbol, backup_location, auto_backup)
-         VALUES (1, @exchange_rate, @empire_coin_inr, @default_fee_percentage, @theme, @currency_symbol, @backup_location, @auto_backup)`,
+           (id, exchange_rate, empire_coin_inr, default_currency, default_fee_percentage, theme, currency_symbol, backup_location, auto_backup)
+         VALUES (1, @exchange_rate, @empire_coin_inr, @default_currency, @default_fee_percentage, @theme, @currency_symbol, @backup_location, @auto_backup)`,
       )
       .run({
         exchange_rate: DEFAULT_SETTINGS.exchange_rate,
         empire_coin_inr: DEFAULT_SETTINGS.empire_coin_inr,
+        default_currency: DEFAULT_SETTINGS.default_currency,
         default_fee_percentage: DEFAULT_SETTINGS.default_fee_percentage,
         theme: DEFAULT_SETTINGS.theme,
         currency_symbol: DEFAULT_SETTINGS.currency_symbol,

@@ -1,9 +1,11 @@
 import { getDb } from '../database'
-import type { AppSettings } from '../../../shared/models'
+import { DEFAULT_SETTINGS } from '../../../shared/constants'
+import { CURRENCIES, type AppSettings, type Currency } from '../../../shared/models'
 
 interface SettingsRow {
   exchange_rate: number
   empire_coin_inr: number
+  default_currency: string
   default_fee_percentage: number
   theme: string
   currency_symbol: string
@@ -11,10 +13,15 @@ interface SettingsRow {
   auto_backup: number
 }
 
+function toCurrency(raw: string): Currency {
+  return CURRENCIES.includes(raw as Currency) ? (raw as Currency) : DEFAULT_SETTINGS.default_currency
+}
+
 function rowToSettings(row: SettingsRow): AppSettings {
   return {
     exchange_rate: row.exchange_rate,
     empire_coin_inr: row.empire_coin_inr,
+    default_currency: toCurrency(row.default_currency),
     default_fee_percentage: row.default_fee_percentage,
     theme: row.theme,
     currency_symbol: row.currency_symbol,
@@ -37,6 +44,7 @@ export const settingsRepo = {
       `UPDATE settings SET
          exchange_rate = @exchange_rate,
          empire_coin_inr = @empire_coin_inr,
+         default_currency = @default_currency,
          default_fee_percentage = @default_fee_percentage,
          theme = @theme,
          currency_symbol = @currency_symbol,
@@ -46,6 +54,7 @@ export const settingsRepo = {
     ).run({
       exchange_rate: next.exchange_rate,
       empire_coin_inr: next.empire_coin_inr,
+      default_currency: next.default_currency,
       default_fee_percentage: next.default_fee_percentage,
       theme: next.theme,
       currency_symbol: next.currency_symbol,

@@ -1,20 +1,31 @@
 import type { ReactNode } from 'react'
 import type { ColumnDef } from '@tanstack/react-table'
-import { Copy, Pencil, Star, Tag, Trash2, Undo2 } from 'lucide-react'
+import { Check, Copy, Pencil, Star, Tag, Trash2, Undo2 } from 'lucide-react'
 import { Checkbox } from '@/components/ui/Checkbox'
 import { Badge, WearBadge } from '@/components/ui/Badge'
+import { inrToEmpire } from '@shared/calculations'
 import { formatDate, formatFloatValue, formatUsd } from '@/lib/format'
 import { cn } from '@/lib/utils'
-import type { Skin } from '@shared/models'
+import type { Skin, SkinStatus } from '@shared/models'
 
 export interface InventoryColumnHandlers {
   money: (n: number | null | undefined) => string
+  /** Live coin→INR rate, for skins that were never priced in coins. */
+  empireCoinInr: number
   onEdit: (skin: Skin) => void
   onDuplicate: (skin: Skin) => void
   onDelete: (skin: Skin) => void
+  onList: (skin: Skin) => void
+  onUnlist: (skin: Skin) => void
   onSell: (skin: Skin) => void
   onReopen: (skin: Skin) => void
   onToggleFavorite: (skin: Skin) => void
+}
+
+const STATUS_BADGE: Record<SkinStatus, { label: string; variant: 'brand' | 'warning' | 'success' }> = {
+  owned: { label: 'Owned', variant: 'brand' },
+  listed: { label: 'Listed', variant: 'warning' },
+  sold: { label: 'Sold', variant: 'success' },
 }
 
 /** Human-friendly labels for the column-visibility menu. */
@@ -91,8 +102,8 @@ export function buildColumns(h: InventoryColumnHandlers): ColumnDef<Skin>[] {
       header: 'Status',
       size: 96,
       cell: ({ row }) => {
-        const sold = row.original.status === 'sold'
-        return <Badge variant={sold ? 'success' : 'brand'}>{sold ? 'Sold' : 'Owned'}</Badge>
+        const badge = STATUS_BADGE[row.original.status] ?? STATUS_BADGE.owned
+        return <Badge variant={badge.variant}>{badge.label}</Badge>
       },
     },
     {
@@ -189,13 +200,22 @@ export function buildColumns(h: InventoryColumnHandlers): ColumnDef<Skin>[] {
       header: 'Empire',
       size: 110,
       meta: { align: 'right' },
-      cell: ({ row }) => (
-        <span className="tabular-nums text-muted">
-          {row.original.purchase_price_empire != null
-            ? `${row.original.purchase_price_empire.toLocaleString('en-US')} c`
-            : '—'}
-        </span>
-      ),
+      cell: ({ row }) => {
+        const skin = row.original
+        // Coins are stored only for skins actually bought with them. Everything else is
+        // converted from INR at the rate frozen on the row, falling back to the live one,
+        // so the column reads in coins no matter where the skin came from.
+        const coins =
+          skin.purchase_price_empire ??
+          (skin.purchase_price_inr != null
+            ? inrToEmpire(skin.purchase_price_inr, skin.purchase_empire_rate ?? h.empireCoinInr)
+            : null)
+        return (
+          <span className="tabular-nums text-muted">
+            {coins != null ? `${coins.toLocaleString('en-US')} c` : '—'}
+          </span>
+        )
+      },
     },
     {
       id: 'purchase_date',
@@ -233,11 +253,27 @@ export function buildColumns(h: InventoryColumnHandlers): ColumnDef<Skin>[] {
             <IconButton title="Duplicate" onClick={() => h.onDuplicate(skin)}>
               <Copy className="h-3.5 w-3.5" />
             </IconButton>
-            {skin.status === 'owned' ? (
-              <IconButton title="Sell" onClick={() => h.onSell(skin)}>
-                <Tag className="h-3.5 w-3.5" />
-              </IconButton>
-            ) : (
+            {skin.status === 'owned' && (
+              <>
+                <IconButton title="List for sale" onClick={() => h.onList(skin)}>
+                  <Tag className="h-3.5 w-3.5" />
+                </IconButton>
+                <IconButton title="Sell" onClick={() => h.onSell(skin)}>
+                  <Check className="h-3.5 w-3.5" />
+                </IconButton>
+              </>
+            )}
+            {skin.status === 'listed' && (
+              <>
+                <IconButton title="Mark sold" onClick={() => h.onSell(skin)}>
+                  <Check className="h-3.5 w-3.5" />
+                </IconButton>
+                <IconButton title="Unlist" onClick={() => h.onUnlist(skin)}>
+                  <Undo2 className="h-3.5 w-3.5" />
+                </IconButton>
+              </>
+            )}
+            {skin.status === 'sold' && (
               <IconButton title="Re-open (mark owned)" onClick={() => h.onReopen(skin)}>
                 <Undo2 className="h-3.5 w-3.5" />
               </IconButton>

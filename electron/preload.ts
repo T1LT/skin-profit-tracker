@@ -8,6 +8,7 @@ import type {
   DashboardStats,
   FileResult,
   ImportResult,
+  ListSkinInput,
   PagedResult,
   SellSkinInput,
   Skin,
@@ -30,6 +31,9 @@ const api = {
     create: (input: CreateSkinInput): Promise<Skin> => ipcRenderer.invoke('skins:create', input),
     update: (id: number, patch: UpdateSkinInput): Promise<Skin | null> =>
       ipcRenderer.invoke('skins:update', id, patch),
+    listForSale: (id: number, input: ListSkinInput): Promise<Skin | null> =>
+      ipcRenderer.invoke('skins:listForSale', id, input),
+    unlist: (id: number): Promise<Skin | null> => ipcRenderer.invoke('skins:unlist', id),
     sell: (id: number, input: SellSkinInput): Promise<Skin | null> =>
       ipcRenderer.invoke('skins:sell', id, input),
     reopen: (id: number): Promise<Skin | null> => ipcRenderer.invoke('skins:reopen', id),

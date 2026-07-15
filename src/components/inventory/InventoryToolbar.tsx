@@ -17,8 +17,8 @@ interface InventoryToolbarProps {
   table: Table<Skin>
   search: string
   onSearch: (v: string) => void
-  status: 'all' | 'owned' | 'sold'
-  onStatus: (v: 'all' | 'owned' | 'sold') => void
+  status: 'all' | 'owned' | 'listed' | 'sold'
+  onStatus: (v: 'all' | 'owned' | 'listed' | 'sold') => void
   source: PurchaseSource | 'all'
   onSource: (v: PurchaseSource | 'all') => void
   dateFrom: string
@@ -36,6 +36,7 @@ interface InventoryToolbarProps {
 const STATUS_OPTIONS = [
   { value: 'all' as const, label: 'All' },
   { value: 'owned' as const, label: 'Owned' },
+  { value: 'listed' as const, label: 'Listed' },
   { value: 'sold' as const, label: 'Sold' },
 ]
 

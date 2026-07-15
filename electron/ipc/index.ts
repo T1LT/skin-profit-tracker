@@ -21,6 +21,7 @@ import type {
   CsvKind,
   FileResult,
   ImportResult,
+  ListSkinInput,
   SellSkinInput,
   Skin,
   SkinFilter,
@@ -48,6 +49,10 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): void
   handle('skins:all', () => skinsRepo.all())
   handle('skins:create', (input: CreateSkinInput) => skinsRepo.create(input))
   handle('skins:update', (id: number, patch: UpdateSkinInput) => skinsRepo.update(id, patch))
+  handle('skins:listForSale', (id: number, input: ListSkinInput) =>
+    skinsRepo.listForSale(id, input),
+  )
+  handle('skins:unlist', (id: number) => skinsRepo.unlist(id))
   handle('skins:sell', (id: number, input: SellSkinInput) => skinsRepo.sell(id, input))
   handle('skins:reopen', (id: number) => skinsRepo.reopen(id))
   handle('skins:duplicate', (id: number) => skinsRepo.duplicate(id))

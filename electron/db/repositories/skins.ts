@@ -1,7 +1,9 @@
 import { getDb } from '../database'
+import { settingsRepo } from './settings'
 import { roundMoney } from '../../../shared/calculations'
 import type {
   CreateSkinInput,
+  ListSkinInput,
   PagedResult,
   SellSkinInput,
   Skin,
@@ -21,6 +23,11 @@ interface SkinRow {
   tags: string
 }
 
+/**
+ * Every writable column. This doubles as the whitelist in `update()` — a column
+ * missing here is silently dropped from every patch, so keep it in sync with the
+ * schema.
+ */
 const INSERT_COLUMNS = [
   'skin_name',
   'weapon',
@@ -31,16 +38,29 @@ const INSERT_COLUMNS = [
   'stattrak',
   'souvenir',
   'purchase_source',
+  'purchase_currency',
   'purchase_price_usd',
   'purchase_price_inr',
   'purchase_price_empire',
   'purchase_exchange_rate',
+  'purchase_empire_rate',
   'purchase_date',
+  'list_source',
+  'list_currency',
+  'list_price_usd',
+  'list_price_inr',
+  'list_price_empire',
+  'list_exchange_rate',
+  'list_empire_rate',
+  'list_fee_percentage',
+  'list_date',
   'sale_source',
+  'sale_currency',
   'sale_price_usd',
   'sale_price_inr',
   'sale_price_empire',
   'sale_exchange_rate',
+  'sale_empire_rate',
   'sale_fee_percentage',
   'sale_date',
   'status',
@@ -68,8 +88,12 @@ const SORTABLE = new Set<string>([
   'purchase_price_inr',
   'purchase_price_empire',
   'purchase_date',
+  'list_source',
+  'list_price_inr',
+  'list_date',
   'sale_source',
   'sale_price_inr',
+  'sale_fee_percentage',
   'sale_date',
   'status',
   'created_at',
@@ -78,6 +102,40 @@ const SORTABLE = new Set<string>([
 
 /** SQL expression for realised profit (INR) on a closed trade; NULL-safe. */
 const PROFIT_EXPR = `(COALESCE(sale_price_inr, 0) * (1 - COALESCE(sale_fee_percentage, 0) / 100.0) - COALESCE(purchase_price_inr, 0))`
+
+/**
+ * Purchase price in Empire coins. Skins bought with coins have it stored; everything
+ * else is converted from INR at the rate frozen on the row, falling back to the live
+ * setting (@__coin) — so the column sorts by the same value the table displays.
+ */
+const EMPIRE_EXPR = `COALESCE(purchase_price_empire,
+  purchase_price_inr / NULLIF(COALESCE(purchase_empire_rate, @__coin), 0))`
+
+/** Every listing field, blanked. Spread into a patch to take a skin off the market. */
+const CLEAR_LIST_FIELDS = {
+  list_source: null,
+  list_currency: null,
+  list_price_usd: null,
+  list_price_inr: null,
+  list_price_empire: null,
+  list_exchange_rate: null,
+  list_empire_rate: null,
+  list_fee_percentage: null,
+  list_date: null,
+} satisfies UpdateSkinInput
+
+/** Every sale field, blanked. */
+const CLEAR_SALE_FIELDS = {
+  sale_source: null,
+  sale_currency: null,
+  sale_price_usd: null,
+  sale_price_inr: null,
+  sale_price_empire: null,
+  sale_exchange_rate: null,
+  sale_empire_rate: null,
+  sale_fee_percentage: null,
+  sale_date: null,
+} satisfies UpdateSkinInput
 
 function rowToSkin(row: SkinRow): Skin {
   return {
@@ -168,12 +226,21 @@ export const skinsRepo = {
     ).c
 
     let orderCol = 'created_at'
+    let byEmpire = false
     if (filter.sortBy === 'profit') orderCol = PROFIT_EXPR
-    else if (filter.sortBy && SORTABLE.has(filter.sortBy)) orderCol = filter.sortBy
+    else if (filter.sortBy === 'purchase_price_empire') {
+      orderCol = EMPIRE_EXPR
+      byEmpire = true
+    } else if (filter.sortBy && SORTABLE.has(filter.sortBy)) orderCol = filter.sortBy
     const dir = filter.sortDir === 'asc' ? 'ASC' : 'DESC'
 
     const limit = filter.limit ?? 1_000_000
     const offset = filter.offset ?? 0
+
+    // better-sqlite3 rejects a named param the statement doesn't reference, so @__coin
+    // is only bound when EMPIRE_EXPR is actually in the ORDER BY.
+    const rowParams: Record<string, unknown> = { ...params, __limit: limit, __offset: offset }
+    if (byEmpire) rowParams.__coin = settingsRepo.get().empire_coin_inr
 
     const rows = db
       .prepare(
@@ -181,7 +248,7 @@ export const skinsRepo = {
          ORDER BY pinned DESC, ${orderCol} ${dir}, id DESC
          LIMIT @__limit OFFSET @__offset`,
       )
-      .all({ ...params, __limit: limit, __offset: offset }) as SkinRow[]
+      .all(rowParams) as SkinRow[]
 
     return { rows: rows.map(rowToSkin), total }
   },
@@ -219,13 +286,8 @@ export const skinsRepo = {
       purchase_price_inr: inr,
       wear: input.wear ?? null,
       finish: input.finish ?? '',
-      sale_source: null,
-      sale_price_usd: null,
-      sale_price_inr: null,
-      sale_price_empire: null,
-      sale_exchange_rate: null,
-      sale_fee_percentage: null,
-      sale_date: null,
+      ...CLEAR_LIST_FIELDS,
+      ...CLEAR_SALE_FIELDS,
       status: 'owned',
       created_at: now,
       updated_at: now,
@@ -272,6 +334,44 @@ export const skinsRepo = {
     return this.getById(id)
   },
 
+  /**
+   * Put a skin up for sale on a marketplace. Named `listForSale` rather than `list`
+   * because `list` is already this repo's paging query.
+   */
+  listForSale(id: number, input: ListSkinInput): Skin | null {
+    const skin = this.getById(id)
+    if (!skin) return null
+
+    let inr = input.list_price_inr ?? null
+    if (inr == null && input.list_price_usd != null && input.list_exchange_rate != null) {
+      inr = roundMoney(input.list_price_usd * input.list_exchange_rate)
+    }
+
+    return this.update(id, {
+      list_source: input.list_source,
+      list_currency: input.list_currency ?? null,
+      list_price_usd: input.list_price_usd ?? null,
+      list_price_inr: inr,
+      list_price_empire: input.list_price_empire ?? null,
+      list_exchange_rate: input.list_exchange_rate ?? null,
+      list_empire_rate: input.list_empire_rate ?? null,
+      list_fee_percentage: input.list_fee_percentage ?? null,
+      list_date: input.list_date,
+      status: 'listed',
+      notes: input.notes ?? skin.notes,
+    })
+  },
+
+  /** Pull a listing off the market (clears the listing, status back to owned). */
+  unlist(id: number): Skin | null {
+    return this.update(id, { ...CLEAR_LIST_FIELDS, status: 'owned' })
+  },
+
+  /**
+   * Close a trade. Valid from `owned` (sold directly) or `listed` (the listing sold).
+   * The `list_*` fields are deliberately left intact — they record what the skin was
+   * asked at, which is what makes "sold below ask" answerable later.
+   */
   sell(id: number, input: SellSkinInput): Skin | null {
     const skin = this.getById(id)
     if (!skin) return null
@@ -283,10 +383,12 @@ export const skinsRepo = {
 
     return this.update(id, {
       sale_source: input.sale_source,
+      sale_currency: input.sale_currency ?? null,
       sale_price_usd: input.sale_price_usd ?? null,
       sale_price_inr: inr,
       sale_price_empire: input.sale_price_empire ?? null,
       sale_exchange_rate: input.sale_exchange_rate ?? null,
+      sale_empire_rate: input.sale_empire_rate ?? null,
       sale_fee_percentage: input.sale_fee_percentage ?? null,
       sale_date: input.sale_date,
       status: 'sold',
@@ -294,18 +396,9 @@ export const skinsRepo = {
     })
   },
 
-  /** Re-open a sold skin (clears all sale fields, status back to owned). */
+  /** Re-open a sold skin: clears the sale *and* the stale listing, back to owned. */
   reopen(id: number): Skin | null {
-    return this.update(id, {
-      sale_source: null,
-      sale_price_usd: null,
-      sale_price_inr: null,
-      sale_price_empire: null,
-      sale_exchange_rate: null,
-      sale_fee_percentage: null,
-      sale_date: null,
-      status: 'owned',
-    })
+    return this.update(id, { ...CLEAR_SALE_FIELDS, ...CLEAR_LIST_FIELDS, status: 'owned' })
   },
 
   duplicate(id: number): Skin | null {
@@ -321,10 +414,12 @@ export const skinsRepo = {
       stattrak: s.stattrak,
       souvenir: s.souvenir,
       purchase_source: s.purchase_source,
+      purchase_currency: s.purchase_currency,
       purchase_price_usd: s.purchase_price_usd,
       purchase_price_inr: s.purchase_price_inr,
       purchase_price_empire: s.purchase_price_empire,
       purchase_exchange_rate: s.purchase_exchange_rate,
+      purchase_empire_rate: s.purchase_empire_rate,
       purchase_date: s.purchase_date,
       notes: s.notes,
       tags: s.tags,

@@ -1,7 +1,7 @@
-import { useEffect, useMemo, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, type ReactNode } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
-import { Tag } from 'lucide-react'
+import { Check, Tag } from 'lucide-react'
 import { api } from '@/lib/api'
 import { useSettings } from '@/providers/SettingsProvider'
 import { useToast } from '@/providers/ToastProvider'
@@ -18,17 +18,14 @@ import {
   SALE_SOURCES,
   defaultSaleValues,
   saleFormSchema,
+  saleValuesFromSkin,
+  saleValuesToListInput,
   saleValuesToSellInput,
   type SaleFormValues,
 } from '@/validation/sale'
 import { computeTradeProfit, priceBreakdown, type TradeProfit } from '@shared/calculations'
 import { MARKETPLACE_FEES } from '@shared/constants'
-import {
-  formatDate,
-  formatHoldingTime,
-  formatPercent,
-  formatSignedMoney,
-} from '@/lib/format'
+import { formatDate, formatHoldingTime, formatPercent, formatSignedMoney } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import type { Currency, Skin } from '@shared/models'
 
@@ -38,17 +35,40 @@ const CURRENCY_LABELS: Record<Currency, string> = {
   EMPIRE: 'Empire coins',
 }
 
-export function SaleModal({
+/**
+ * `list` puts an owned skin on the market, `sell` closes the trade, and the two
+ * `edit-*` modes correct an already-recorded listing or sale in place.
+ */
+export type TradeMode = 'list' | 'sell' | 'edit-list' | 'edit-sale'
+
+const COPY: Record<TradeMode, { title: string; cta: string; priceLabel: string; dateLabel: string }> = {
+  list: { title: 'List skin', cta: 'List for sale', priceLabel: 'Ask price', dateLabel: 'Listed on' },
+  sell: { title: 'Sell skin', cta: 'Confirm sale', priceLabel: 'Sale price', dateLabel: 'Sale date' },
+  'edit-list': { title: 'Edit listing', cta: 'Save listing', priceLabel: 'Ask price', dateLabel: 'Listed on' },
+  'edit-sale': { title: 'Edit sale', cta: 'Save sale', priceLabel: 'Sale price', dateLabel: 'Sale date' },
+}
+
+const STATUS_BADGE: Record<string, { label: string; variant: 'brand' | 'warning' | 'success' }> = {
+  owned: { label: 'Owned', variant: 'brand' },
+  listed: { label: 'Listed', variant: 'warning' },
+  sold: { label: 'Sold', variant: 'success' },
+}
+
+export function TradeModal({
   skin,
+  mode,
   onClose,
-  onSold,
+  onSaved,
 }: {
   skin: Skin | null
+  mode: TradeMode
   onClose: () => void
-  onSold: (updated: Skin) => void
+  onSaved: (updated: Skin) => void
 }) {
   const { money, settings } = useSettings()
   const toast = useToast()
+  const copy = COPY[mode]
+  const isListSide = mode === 'list' || mode === 'edit-list'
 
   const {
     register,
@@ -59,16 +79,30 @@ export function SaleModal({
     formState: { errors, isSubmitting },
   } = useForm<SaleFormValues>({
     resolver: zodResolver(saleFormSchema),
-    defaultValues: defaultSaleValues(settings.exchange_rate, settings.default_fee_percentage),
+    defaultValues: defaultSaleValues(settings),
   })
   const values = watch()
 
-  useEffect(() => {
-    if (skin) reset(defaultSaleValues(settings.exchange_rate, settings.default_fee_percentage))
-  }, [skin, reset, settings.exchange_rate, settings.default_fee_percentage])
+  // The marketplace-fee autofill below must not clobber the values we seed here, so it
+  // is told to stand down until the user actually touches the source select.
+  const sourceTouched = useRef(false)
 
-  // Auto-fill the fee from the chosen marketplace.
   useEffect(() => {
+    if (!skin) return
+    sourceTouched.current = false
+    if (mode === 'edit-list') reset(saleValuesFromSkin(skin, 'list', settings))
+    else if (mode === 'edit-sale') reset(saleValuesFromSkin(skin, 'sale', settings))
+    else if (mode === 'sell' && skin.status === 'listed') {
+      // Selling something that was listed: carry the listing's terms over, but the sale
+      // is happening today, not on the day it was listed.
+      reset(saleValuesFromSkin(skin, 'list', settings, 'today'))
+    } else reset(defaultSaleValues(settings))
+  }, [skin, mode, reset, settings])
+
+  // Auto-fill the fee from the chosen marketplace — but only once the user picks one,
+  // otherwise this fires on mount and overwrites a seeded or previously-saved fee.
+  useEffect(() => {
+    if (!sourceTouched.current) return
     const fee = MARKETPLACE_FEES[values.sale_source]
     if (fee != null) setValue('fee_percentage', String(fee))
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -78,13 +112,14 @@ export function SaleModal({
     if (!skin) return null
     const price = Number(values.price)
     const rate = Number(values.exchange_rate)
+    const coin = Number(values.empire_coin_inr)
     const fee = Number(values.fee_percentage)
     if (!Number.isFinite(price) || price <= 0) return null
     const gross = priceBreakdown(
       values.currency,
       price,
       Number.isFinite(rate) ? rate : 0,
-      settings.empire_coin_inr,
+      Number.isFinite(coin) ? coin : settings.empire_coin_inr,
     ).inr
     return computeTradeProfit({
       purchaseInr: skin.purchase_price_inr ?? 0,
@@ -97,6 +132,7 @@ export function SaleModal({
     skin,
     values.price,
     values.exchange_rate,
+    values.empire_coin_inr,
     values.fee_percentage,
     values.currency,
     values.sale_date,
@@ -106,17 +142,27 @@ export function SaleModal({
   const onSubmit = async (v: SaleFormValues) => {
     if (!skin) return
     try {
-      const updated = await api.skins.sell(skin.id, saleValuesToSellInput(v, settings.empire_coin_inr))
-      if (updated) {
-        onSold(updated)
+      let updated: Skin | null = null
+      if (mode === 'list') updated = await api.skins.listForSale(skin.id, saleValuesToListInput(v))
+      else if (mode === 'sell') updated = await api.skins.sell(skin.id, saleValuesToSellInput(v))
+      else if (mode === 'edit-list') updated = await api.skins.update(skin.id, saleValuesToListInput(v))
+      else updated = await api.skins.update(skin.id, saleValuesToSellInput(v))
+
+      if (!updated) return
+      onSaved(updated)
+      if (mode === 'list') {
+        toast.success(`Listed at ${money(updated.list_price_inr)}.`, { title: 'Listing saved' })
+      } else if (mode === 'sell') {
         toast.success(`Sold for ${money(updated.sale_price_inr)}.`, {
           title: 'Sale completed',
           desktop: true,
         })
-        onClose()
+      } else {
+        toast.success('Changes saved.')
       }
+      onClose()
     } catch {
-      toast.error('Could not complete the sale.')
+      toast.error(`Could not save this ${isListSide ? 'listing' : 'sale'}.`)
     }
   }
 
@@ -125,11 +171,13 @@ export function SaleModal({
       ? { suffix: 'coins' }
       : { prefix: values.currency === 'USD' ? '$' : settings.currency_symbol }
 
+  const badge = skin ? (STATUS_BADGE[skin.status] ?? STATUS_BADGE.owned) : STATUS_BADGE.owned
+
   return (
     <Modal
       open={!!skin}
       onClose={onClose}
-      title="Sell skin"
+      title={copy.title}
       size="lg"
       footer={
         <>
@@ -137,8 +185,8 @@ export function SaleModal({
             Cancel
           </Button>
           <Button variant="primary" onClick={handleSubmit(onSubmit)} loading={isSubmitting}>
-            <Tag className="h-4 w-4" />
-            Confirm sale
+            {isListSide ? <Tag className="h-4 w-4" /> : <Check className="h-4 w-4" />}
+            {copy.cta}
           </Button>
         </>
       }
@@ -158,12 +206,18 @@ export function SaleModal({
                 Bought for {money(skin.purchase_price_inr)} · {formatDate(skin.purchase_date)}
               </p>
             </div>
-            <Badge variant="brand">Owned</Badge>
+            <Badge variant={badge.variant}>{badge.label}</Badge>
           </div>
 
           <form onSubmit={handleSubmit(onSubmit)} className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <Field label="Sale source" required>
-              <Select {...register('sale_source')}>
+            <Field label="Marketplace" required>
+              <Select
+                {...register('sale_source', {
+                  onChange: () => {
+                    sourceTouched.current = true
+                  },
+                })}
+              >
                 {SALE_SOURCES.map((s) => (
                   <option key={s} value={s}>
                     {s}
@@ -171,7 +225,7 @@ export function SaleModal({
                 ))}
               </Select>
             </Field>
-            <Field label="Sale date" required error={errors.sale_date?.message}>
+            <Field label={copy.dateLabel} required error={errors.sale_date?.message}>
               <Input type="date" error={!!errors.sale_date} {...register('sale_date')} />
             </Field>
             <Field label="Currency" required>
@@ -183,7 +237,7 @@ export function SaleModal({
                 ))}
               </Select>
             </Field>
-            <Field label="Sale price" required error={errors.price?.message}>
+            <Field label={copy.priceLabel} required error={errors.price?.message}>
               <Input
                 type="number"
                 step="0.01"
@@ -218,12 +272,32 @@ export function SaleModal({
                 {...register('exchange_rate')}
               />
             </Field>
+            <Field
+              label="Empire coin rate (1 coin → INR)"
+              error={errors.empire_coin_inr?.message}
+              hint="Frozen on this trade — changing it in Settings later won't rewrite it."
+            >
+              <Input
+                type="number"
+                step="0.01"
+                min="0"
+                inputMode="decimal"
+                prefix={settings.currency_symbol}
+                error={!!errors.empire_coin_inr}
+                {...register('empire_coin_inr')}
+              />
+            </Field>
             <Field label="Notes" className="sm:col-span-2">
-              <Textarea placeholder="Anything worth remembering about this sale…" {...register('notes')} />
+              <Textarea placeholder="Anything worth remembering…" {...register('notes')} />
             </Field>
           </form>
 
-          <SalePnl pnl={pnl} money={money} symbol={settings.currency_symbol} />
+          <SalePnl
+            pnl={pnl}
+            money={money}
+            symbol={settings.currency_symbol}
+            projected={isListSide}
+          />
         </div>
       )}
     </Modal>
@@ -243,15 +317,18 @@ function SalePnl({
   pnl,
   money,
   symbol,
+  projected,
 }: {
   pnl: TradeProfit | null
   money: (n: number | null | undefined) => string
   symbol: string
+  /** A listing hasn't sold yet, so its profit is what it *would* make at the ask price. */
+  projected?: boolean
 }) {
   if (!pnl) {
     return (
       <div className="rounded-xl border border-dashed border-line/70 p-5 text-center text-sm text-faint">
-        Enter a sale price to see your profit, ROI and holding time.
+        Enter a price to see your {projected ? 'projected ' : ''}profit, ROI and holding time.
       </div>
     )
   }
@@ -265,14 +342,16 @@ function SalePnl({
     >
       <div className="grid grid-cols-1 gap-y-2 text-sm sm:grid-cols-2 sm:gap-x-8">
         <BreakdownRow label="Purchase cost" value={money(pnl.purchaseInr)} />
-        <BreakdownRow label="Gross sale" value={money(pnl.grossSaleInr)} />
+        <BreakdownRow label={projected ? 'Gross ask' : 'Gross sale'} value={money(pnl.grossSaleInr)} />
         <BreakdownRow label="Marketplace fee" value={`−${money(pnl.feeInr)}`} muted />
-        <BreakdownRow label="Net sale" value={money(pnl.netSaleInr)} />
+        <BreakdownRow label={projected ? 'Net if it sells' : 'Net sale'} value={money(pnl.netSaleInr)} />
       </div>
       <div className="my-3 border-t border-line/50" />
       <div className="flex items-end justify-between gap-4">
         <div>
-          <p className="text-[11px] uppercase tracking-wider text-muted">Profit</p>
+          <p className="text-[11px] uppercase tracking-wider text-muted">
+            {projected ? 'Profit if it sells at this price' : 'Profit'}
+          </p>
           <p
             className={cn(
               'text-2xl font-semibold [font-variant-numeric:tabular-nums]',

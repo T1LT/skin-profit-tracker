@@ -59,6 +59,7 @@ export default function Settings() {
   const [prefs, setPrefs] = useState({
     exchange_rate: String(settings.exchange_rate),
     empire_coin_inr: String(settings.empire_coin_inr),
+    default_currency: settings.default_currency,
     default_fee_percentage: String(settings.default_fee_percentage),
     currency_symbol: settings.currency_symbol,
   })
@@ -71,12 +72,14 @@ export default function Settings() {
     setPrefs({
       exchange_rate: String(settings.exchange_rate),
       empire_coin_inr: String(settings.empire_coin_inr),
+      default_currency: settings.default_currency,
       default_fee_percentage: String(settings.default_fee_percentage),
       currency_symbol: settings.currency_symbol,
     })
   }, [
     settings.exchange_rate,
     settings.empire_coin_inr,
+    settings.default_currency,
     settings.default_fee_percentage,
     settings.currency_symbol,
   ])
@@ -94,6 +97,7 @@ export default function Settings() {
       await update({
         exchange_rate: rate,
         empire_coin_inr: coinInr,
+        default_currency: prefs.default_currency,
         default_fee_percentage: fee,
         currency_symbol: prefs.currency_symbol.trim(),
       })
@@ -230,6 +234,24 @@ export default function Settings() {
                 </Field>
               )}
             </div>
+          </div>
+
+          <div>
+            <p className="mb-2 text-xs font-medium text-muted">Default currency</p>
+            <SegmentedControl
+              options={[
+                { value: 'EMPIRE' as const, label: 'Empire coins' },
+                { value: 'USD' as const, label: 'USD' },
+                { value: 'INR' as const, label: 'INR' },
+              ]}
+              value={prefs.default_currency}
+              onChange={(v) => setPrefs((p) => ({ ...p, default_currency: v }))}
+              size="sm"
+            />
+            <p className="mt-2 text-xs text-faint">
+              Pre-selected when you list, sell, or manually add a skin. Pasted listings still use the
+              marketplace's own currency.
+            </p>
           </div>
 
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">

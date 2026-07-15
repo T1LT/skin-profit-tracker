@@ -63,10 +63,14 @@ export type PurchaseFormValues = z.infer<typeof purchaseFormSchema>
 
 export type PurchaseMode = 'csfloat' | 'empire' | 'manual'
 
-const MODE_DEFAULTS: Record<PurchaseMode, { source: PurchaseSource; currency: Currency }> = {
+/**
+ * The paste modes force their own currency — the parser overwrites it from the listing
+ * anyway — so only the manual form honours the user's default currency (`null` here).
+ */
+const MODE_DEFAULTS: Record<PurchaseMode, { source: PurchaseSource; currency: Currency | null }> = {
   csfloat: { source: 'CSFloat', currency: 'USD' },
   empire: { source: 'CSGOEmpire', currency: 'EMPIRE' },
-  manual: { source: 'Manual', currency: 'USD' },
+  manual: { source: 'Manual', currency: null },
 }
 
 /** Today as yyyy-mm-dd for a native date input. */
@@ -77,8 +81,10 @@ export function todayInput(): string {
 export function defaultPurchaseValues(
   mode: PurchaseMode,
   exchangeRate: number,
+  defaultCurrency: Currency = 'USD',
 ): PurchaseFormValues {
-  const { source, currency } = MODE_DEFAULTS[mode]
+  const { source, currency: modeCurrency } = MODE_DEFAULTS[mode]
+  const currency = modeCurrency ?? defaultCurrency
   return {
     weapon: '',
     finish: '',
@@ -151,10 +157,13 @@ export function purchaseValuesToCreateInput(
     souvenir: v.souvenir,
     category: (v.category || null) as ItemCategory | null,
     purchase_source: v.purchase_source,
+    purchase_currency: v.currency,
     purchase_price_usd: breakdown.usd,
     purchase_price_inr: breakdown.inr,
     purchase_price_empire: breakdown.empire,
     purchase_exchange_rate: rate,
+    // Frozen with the row so a later change to the coin rate can't rewrite this cost.
+    purchase_empire_rate: empireCoinInr,
     purchase_date: toIsoDate(v.purchase_date),
     notes: v.notes.trim() || null,
     favorite: v.favorite,

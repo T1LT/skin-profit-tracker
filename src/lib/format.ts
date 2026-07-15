@@ -69,9 +69,15 @@ export function formatPercent(
   return `${sign}${value.toFixed(decimals)}%`
 }
 
+/**
+ * Floats are recorded to as many as 12 decimals, so render every digit the user
+ * actually entered — but pad short ones out to 4 places so the column stays aligned.
+ */
 export function formatFloatValue(value: number | null | undefined): string {
   if (value == null || Number.isNaN(value)) return '—'
-  return value.toFixed(value < 0.001 ? 6 : 4)
+  const full = value.toFixed(12).replace(/0+$/, '')
+  const [whole, decimals = ''] = full.split('.')
+  return `${whole}.${decimals.padEnd(4, '0')}`
 }
 
 export function formatDate(value: string | Date | null | undefined): string {

@@ -29,6 +29,15 @@ export function empireToInr(coins: number, empireCoinInr = DEFAULT_EMPIRE_COIN_I
   return coins * empireCoinInr
 }
 
+/**
+ * Convert INR back to CSGOEmpire coins. The inverse of `empireToInr`, used to show
+ * a coin figure for skins that were never priced in coins to begin with.
+ */
+export function inrToEmpire(inr: number, empireCoinInr = DEFAULT_EMPIRE_COIN_INR): number {
+  if (!empireCoinInr) return 0
+  return roundMoney(inr / empireCoinInr)
+}
+
 export function feeAmount(gross: number, feePct: number): number {
   return gross * (clampPercent(feePct) / 100)
 }
@@ -91,17 +100,6 @@ export function computeTradeProfit(params: {
   }
 }
 
-/**
- * The lowest gross sale price (before this marketplace's fee) at which a trade
- * breaks even, given a purchase cost and a fee percentage.
- *   net = gross * (1 - fee/100)  =>  gross = cost / (1 - fee/100)
- */
-export function breakEvenGross(purchaseInr: number, feePct: number): number {
-  const f = clampPercent(feePct) / 100
-  if (f >= 1) return Infinity
-  return roundMoney(purchaseInr / (1 - f))
-}
-
 export interface PriceBreakdown {
   usd: number | null
   inr: number
@@ -111,7 +109,7 @@ export interface PriceBreakdown {
 /**
  * Resolve a price entered in any currency into the canonical INR value plus the
  * equivalent USD / Empire-coin figures. INR is always populated; the others are
- * filled when meaningful. Used by Purchases, Sales and the Arbitrage calculator.
+ * filled when meaningful. Used by the purchase, list and sale forms.
  */
 export function priceBreakdown(
   currency: Currency,
@@ -130,75 +128,6 @@ export function priceBreakdown(
   // EMPIRE coins: 1 coin = empireCoinInr INR. USD is derived from that.
   const inr = amt * empireCoinInr
   return { usd: rate > 0 ? roundMoney(inr / rate) : null, inr: roundMoney(inr), empire: roundMoney(amt) }
-}
-
-export interface ArbitrageInput {
-  purchaseCurrency: Currency
-  purchasePrice: number
-  purchaseFeePct: number
-  saleCurrency: Currency
-  salePrice: number
-  saleFeePct: number
-  exchangeRate: number
-  empireCoinInr?: number
-}
-
-export interface ArbitrageResult {
-  purchaseInr: number
-  purchaseFeeInr: number
-  saleGrossInr: number
-  saleFeeInr: number
-  netSaleInr: number
-  profitInr: number
-  profitPct: number
-  roi: number
-  isProfit: boolean
-  /** Gross sale price (in each currency) required to break even. */
-  breakEvenInr: number
-  breakEvenUsd: number
-  breakEvenEmpire: number
-}
-
-/**
- * The full cross-marketplace arbitrage calculation. Buy in one currency/market,
- * sell in another; everything is normalised to INR. Break-even is the gross sale
- * price (before the sale-side fee) needed to make zero profit, expressed in INR,
- * USD and Empire coins.
- */
-export function computeArbitrage(input: ArbitrageInput): ArbitrageResult {
-  const coinInr = input.empireCoinInr ?? DEFAULT_EMPIRE_COIN_INR
-  const rate = input.exchangeRate || 0
-
-  const baseCostInr = priceBreakdown(input.purchaseCurrency, input.purchasePrice, rate, coinInr).inr
-  const purchaseFeeInr = baseCostInr * (clampPercent(input.purchaseFeePct) / 100)
-  const purchaseInr = baseCostInr + purchaseFeeInr
-
-  const saleGrossInr = priceBreakdown(input.saleCurrency, input.salePrice, rate, coinInr).inr
-  const saleFeeInr = saleGrossInr * (clampPercent(input.saleFeePct) / 100)
-  const netSaleInr = saleGrossInr - saleFeeInr
-
-  const profitInr = netSaleInr - purchaseInr
-  const profitPct = purchaseInr > 0 ? (profitInr / purchaseInr) * 100 : 0
-
-  const breakEvenInr = breakEvenGross(purchaseInr, input.saleFeePct)
-  const breakEvenUsd = rate > 0 && Number.isFinite(breakEvenInr) ? breakEvenInr / rate : 0
-  const breakEvenEmpire =
-    coinInr > 0 && Number.isFinite(breakEvenInr) ? breakEvenInr / coinInr : 0
-
-  return {
-    purchaseInr: roundMoney(purchaseInr),
-    purchaseFeeInr: roundMoney(purchaseFeeInr),
-    saleGrossInr: roundMoney(saleGrossInr),
-    saleFeeInr: roundMoney(saleFeeInr),
-    netSaleInr: roundMoney(netSaleInr),
-    profitInr: roundMoney(profitInr),
-    profitPct,
-    roi: profitPct,
-    isProfit: profitInr >= 0,
-    breakEvenInr: roundMoney(breakEvenInr),
-    breakEvenUsd: roundMoney(breakEvenUsd),
-    breakEvenEmpire: roundMoney(breakEvenEmpire),
-  }
 }
 
 /** Convenience: average of a numeric array (0 for empty). */

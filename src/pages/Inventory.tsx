@@ -26,12 +26,12 @@ import type { PurchaseSource, Skin, SkinFilter } from '@shared/models'
 
 export default function Inventory() {
   const navigate = useNavigate()
-  const { money } = useSettings()
+  const { money, settings } = useSettings()
   const toast = useToast()
   const [searchParams] = useSearchParams()
 
   const [search, setSearch] = useState(() => searchParams.get('q') ?? '')
-  const [status, setStatus] = useState<'all' | 'owned' | 'sold'>('all')
+  const [status, setStatus] = useState<'all' | 'owned' | 'listed' | 'sold'>('all')
   const [source, setSource] = useState<PurchaseSource | 'all'>('all')
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo] = useState('')
@@ -156,20 +156,44 @@ export default function Inventory() {
     [refetch],
   )
 
+  const handleUnlist = useCallback(
+    async (skin: Skin) => {
+      await api.skins.unlist(skin.id)
+      await refetch()
+      toast.success('Listing removed — back to owned.')
+    },
+    [refetch, toast],
+  )
+
+  // Listing and selling both happen in the Sales page's trade modal.
   const handleSell = useCallback((skin: Skin) => navigate(`/sales?sell=${skin.id}`), [navigate])
+  const handleList = useCallback((skin: Skin) => navigate(`/sales?list=${skin.id}`), [navigate])
 
   const columns = useMemo(
     () =>
       buildColumns({
         money,
+        empireCoinInr: settings.empire_coin_inr,
         onEdit: setEditing,
         onDuplicate: handleDuplicate,
         onDelete: handleDelete,
+        onList: handleList,
+        onUnlist: handleUnlist,
         onSell: handleSell,
         onReopen: handleReopen,
         onToggleFavorite: handleToggleFavorite,
       }),
-    [money, handleDuplicate, handleDelete, handleSell, handleReopen, handleToggleFavorite],
+    [
+      money,
+      settings.empire_coin_inr,
+      handleDuplicate,
+      handleDelete,
+      handleList,
+      handleUnlist,
+      handleSell,
+      handleReopen,
+      handleToggleFavorite,
+    ],
   )
 
   const table = useReactTable({

@@ -40,7 +40,12 @@ export type PurchaseSource = (typeof PURCHASE_SOURCES)[number]
 export const SALE_SOURCES = ['CSFloat', 'Empire', 'Skinport', 'BUFF', 'Steam', 'Other'] as const
 export type SaleSource = (typeof SALE_SOURCES)[number]
 
-export const SKIN_STATUSES = ['owned', 'sold'] as const
+/**
+ * A skin's lifecycle: bought (`owned`), put up on a marketplace (`listed`), then
+ * `sold`. A listed skin is still held — it counts towards inventory value and cost
+ * basis — but its ask price drives the unrealized-profit figure.
+ */
+export const SKIN_STATUSES = ['owned', 'listed', 'sold'] as const
 export type SkinStatus = (typeof SKIN_STATUSES)[number]
 
 export const CURRENCIES = ['USD', 'INR', 'EMPIRE'] as const
@@ -63,17 +68,31 @@ export interface Skin {
   souvenir: boolean
 
   purchase_source: PurchaseSource
+  purchase_currency: Currency | null
   purchase_price_usd: number | null
   purchase_price_inr: number | null
   purchase_price_empire: number | null
   purchase_exchange_rate: number | null
+  purchase_empire_rate: number | null
   purchase_date: string
 
+  list_source: SaleSource | null
+  list_currency: Currency | null
+  list_price_usd: number | null
+  list_price_inr: number | null
+  list_price_empire: number | null
+  list_exchange_rate: number | null
+  list_empire_rate: number | null
+  list_fee_percentage: number | null
+  list_date: string | null
+
   sale_source: SaleSource | null
+  sale_currency: Currency | null
   sale_price_usd: number | null
   sale_price_inr: number | null
   sale_price_empire: number | null
   sale_exchange_rate: number | null
+  sale_empire_rate: number | null
   sale_fee_percentage: number | null
   sale_date: string | null
 
@@ -101,10 +120,12 @@ export interface CreateSkinInput {
   souvenir?: boolean
 
   purchase_source: PurchaseSource
+  purchase_currency?: Currency | null
   purchase_price_usd?: number | null
   purchase_price_inr?: number | null
   purchase_price_empire?: number | null
   purchase_exchange_rate?: number | null
+  purchase_empire_rate?: number | null
   purchase_date: string
 
   notes?: string | null
@@ -119,12 +140,28 @@ export type UpdateSkinInput = Partial<Omit<Skin, 'id' | 'created_at' | 'updated_
 
 export interface SellSkinInput {
   sale_source: SaleSource
+  sale_currency?: Currency | null
   sale_price_usd?: number | null
   sale_price_inr?: number | null
   sale_price_empire?: number | null
   sale_exchange_rate?: number | null
+  sale_empire_rate?: number | null
   sale_fee_percentage?: number | null
   sale_date: string
+  notes?: string | null
+}
+
+/** Put an owned skin up for sale on a marketplace. Mirrors SellSkinInput. */
+export interface ListSkinInput {
+  list_source: SaleSource
+  list_currency?: Currency | null
+  list_price_usd?: number | null
+  list_price_inr?: number | null
+  list_price_empire?: number | null
+  list_exchange_rate?: number | null
+  list_empire_rate?: number | null
+  list_fee_percentage?: number | null
+  list_date: string
   notes?: string | null
 }
 
@@ -155,6 +192,8 @@ export interface AppSettings {
   exchange_rate: number
   /** INR value of a single CSGOEmpire coin (1 coin = N INR). */
   empire_coin_inr: number
+  /** Currency pre-selected in the purchase / list / sell forms. */
+  default_currency: Currency
   default_fee_percentage: number
   theme: string
   currency_symbol: string
@@ -230,6 +269,8 @@ export interface MonthlyPoint {
   label: string // e.g. "Jul 26"
   purchases: number
   sales: number
+  /** Cash withdrawn against realized profit in this month. */
+  withdrawals: number
   profit: number
   purchaseCount: number
   saleCount: number
@@ -342,14 +383,16 @@ export interface DashboardStats {
   realizedProfit: number
   totalWithdrawn: number
   availableBalance: number
+  /** Expected profit on skins currently listed, net of the listing fee. */
   unrealizedProfit: number
   overallRoi: number
+  /** Skins still held — owned *and* listed. */
   ownedCount: number
+  listedCount: number
+  /** Gross ask value of everything currently listed. */
+  listedValue: number
   soldCount: number
   avgHoldingDays: number
-  avgPurchasePrice: number
-  avgSalePrice: number
-  totalFeesPaid: number
   highestProfit: TradeExtreme | null
   biggestLoss: TradeExtreme | null
   monthly: MonthlyPoint[]

@@ -6,7 +6,6 @@ import Dashboard from './pages/Dashboard'
 import Inventory from './pages/Inventory'
 import Purchases from './pages/Purchases'
 import Sales from './pages/Sales'
-import Arbitrage from './pages/Arbitrage'
 import Statistics from './pages/Statistics'
 import SettingsPage from './pages/Settings'
 
@@ -21,7 +20,6 @@ export function App() {
               <Route path="inventory" element={<Inventory />} />
               <Route path="purchases" element={<Purchases />} />
               <Route path="sales" element={<Sales />} />
-              <Route path="arbitrage" element={<Arbitrage />} />
               <Route path="statistics" element={<Statistics />} />
               <Route path="settings" element={<SettingsPage />} />
               <Route path="*" element={<Navigate to="/" replace />} />

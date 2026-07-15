@@ -23,6 +23,8 @@ interface LeanRow {
   purchase_source: string
   purchase_price_inr: number | null
   purchase_date: string | null
+  list_price_inr: number | null
+  list_fee_percentage: number | null
   sale_source: string | null
   sale_price_inr: number | null
   sale_fee_percentage: number | null
@@ -75,6 +77,7 @@ export function getDashboardStats(): DashboardStats {
     .prepare(
       `SELECT id, skin_name, weapon, finish, wear, stattrak, souvenir, status,
               purchase_source, purchase_price_inr, purchase_date,
+              list_price_inr, list_fee_percentage,
               sale_source, sale_price_inr, sale_fee_percentage, sale_date
        FROM skins`,
     )
@@ -82,7 +85,9 @@ export function getDashboardStats(): DashboardStats {
 
   const latestMarket = marketHistoryRepo.latestPriceMap()
 
-  const owned = rows.filter((r) => r.status === 'owned')
+  // A listed skin is still held: it counts towards inventory value and cost basis.
+  const held = rows.filter((r) => r.status !== 'sold')
+  const listed = rows.filter((r) => r.status === 'listed')
   const sold = rows.filter((r) => r.status === 'sold' && r.sale_price_inr != null)
 
   const profitByRow = new Map<number, TradeProfit>()
@@ -101,18 +106,30 @@ export function getDashboardStats(): DashboardStats {
 
   /* --- headline totals ------------------------------------------------- */
   const totalPurchaseCost = rows.reduce((s, r) => s + (r.purchase_price_inr ?? 0), 0)
-  const ownedCostBasis = owned.reduce((s, r) => s + (r.purchase_price_inr ?? 0), 0)
   const soldPurchaseCost = sold.reduce((s, r) => s + (r.purchase_price_inr ?? 0), 0)
 
-  const totalInventoryValue = owned.reduce(
+  const totalInventoryValue = held.reduce(
     (s, r) => s + (latestMarket.get(r.id) ?? r.purchase_price_inr ?? 0),
     0,
   )
-  const unrealizedProfit = totalInventoryValue - ownedCostBasis
+
+  // Unrealized profit is what the open listings would bank if they all sold at their
+  // ask price today, net of each marketplace's fee. Unlisted skins have no ask, so
+  // they contribute nothing.
+  const listedValue = listed.reduce((s, r) => s + (r.list_price_inr ?? 0), 0)
+  const unrealizedProfit = listed.reduce(
+    (s, r) =>
+      s +
+      computeTradeProfit({
+        purchaseInr: r.purchase_price_inr ?? 0,
+        grossSaleInr: r.list_price_inr ?? 0,
+        feePct: r.list_fee_percentage,
+      }).profitInr,
+    0,
+  )
 
   const totalSoldValue = sold.reduce((s, r) => s + (r.sale_price_inr ?? 0), 0)
   const realizedProfit = sold.reduce((s, r) => s + (profitByRow.get(r.id)?.profitInr ?? 0), 0)
-  const totalFeesPaid = sold.reduce((s, r) => s + (profitByRow.get(r.id)?.feeInr ?? 0), 0)
   const overallRoi = soldPurchaseCost > 0 ? (realizedProfit / soldPurchaseCost) * 100 : 0
 
   // Available balance = realized profit minus cash already withdrawn.
@@ -120,10 +137,6 @@ export function getDashboardStats(): DashboardStats {
   const availableBalance = realizedProfit - totalWithdrawn
 
   const avgHoldingDays = average(sold.map((r) => profitByRow.get(r.id)?.holdingDays ?? 0))
-  const avgPurchasePrice = average(
-    rows.filter((r) => r.purchase_price_inr != null).map((r) => r.purchase_price_inr as number),
-  )
-  const avgSalePrice = average(sold.map((r) => r.sale_price_inr as number))
 
   /* --- best / worst trade --------------------------------------------- */
   let highestProfit: DashboardStats['highestProfit'] = null
@@ -148,7 +161,16 @@ export function getDashboardStats(): DashboardStats {
   const ensureMonth = (key: string): MonthlyPoint => {
     let m = monthMap.get(key)
     if (!m) {
-      m = { month: key, label: monthLabel(key), purchases: 0, sales: 0, profit: 0, purchaseCount: 0, saleCount: 0 }
+      m = {
+        month: key,
+        label: monthLabel(key),
+        purchases: 0,
+        sales: 0,
+        withdrawals: 0,
+        profit: 0,
+        purchaseCount: 0,
+        saleCount: 0,
+      }
       monthMap.set(key, m)
     }
     return m
@@ -167,12 +189,18 @@ export function getDashboardStats(): DashboardStats {
     m.profit += profitByRow.get(r.id)?.profitInr ?? 0
     m.saleCount += 1
   }
+  // Bucketed through ensureMonth() so a month with only a withdrawal still appears.
+  for (const w of withdrawalsRepo.list()) {
+    if (!w.date) continue
+    ensureMonth(monthKey(w.date)).withdrawals += w.amount
+  }
   const monthly: MonthlyPoint[] = fillMonths([...monthMap.keys()]).map((key) => {
     const m = ensureMonth(key)
     return {
       ...m,
       purchases: roundMoney(m.purchases),
       sales: roundMoney(m.sales),
+      withdrawals: roundMoney(m.withdrawals),
       profit: roundMoney(m.profit),
     }
   })
@@ -231,12 +259,11 @@ export function getDashboardStats(): DashboardStats {
     availableBalance: roundMoney(availableBalance),
     unrealizedProfit: roundMoney(unrealizedProfit),
     overallRoi,
-    ownedCount: owned.length,
+    ownedCount: held.length,
+    listedCount: listed.length,
+    listedValue: roundMoney(listedValue),
     soldCount: sold.length,
     avgHoldingDays,
-    avgPurchasePrice: roundMoney(avgPurchasePrice),
-    avgSalePrice: roundMoney(avgSalePrice),
-    totalFeesPaid: roundMoney(totalFeesPaid),
     highestProfit,
     biggestLoss,
     monthly,

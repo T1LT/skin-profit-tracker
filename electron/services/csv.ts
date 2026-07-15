@@ -21,6 +21,7 @@ function inventoryCsv(): string {
   const header = [
     'Status', 'Weapon', 'Finish', 'Wear', 'Float', 'Pattern', 'StatTrak', 'Souvenir', 'Category',
     'Purchase Source', 'Purchase USD', 'Purchase INR', 'Purchase Empire', 'Purchase Rate', 'Purchase Date',
+    'List Source', 'List INR', 'List Empire', 'List Fee %', 'List Date',
     'Sale Source', 'Sale USD', 'Sale INR', 'Sale Empire', 'Sale Fee %', 'Sale Date', 'Favorite', 'Tags', 'Notes',
   ]
   const rows = skinsRepo.all().map((s) => [
@@ -28,6 +29,8 @@ function inventoryCsv(): string {
     yn(s.stattrak), yn(s.souvenir), s.category ?? '',
     s.purchase_source, s.purchase_price_usd ?? '', s.purchase_price_inr ?? '', s.purchase_price_empire ?? '',
     s.purchase_exchange_rate ?? '', dateOnly(s.purchase_date),
+    s.list_source ?? '', s.list_price_inr ?? '', s.list_price_empire ?? '',
+    s.list_fee_percentage ?? '', dateOnly(s.list_date),
     s.sale_source ?? '', s.sale_price_usd ?? '', s.sale_price_inr ?? '', s.sale_price_empire ?? '',
     s.sale_fee_percentage ?? '', dateOnly(s.sale_date), yn(s.favorite), s.tags.join('; '), s.notes ?? '',
   ])
